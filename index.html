@@ -3,9 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Stellar Dominion — 2D 4X (Trek‑inspired)</title>
-  <meta name="description" content="A small, Trek‑inspired but IP‑clean 2D 4X playable in the browser.">
-  <!-- Tailwind (Play CDN) -->
+  <title>Stellar Dominion — 2D 4X (Trek-inspired)</title>
+  <meta name="description" content="A small, Trek-inspired but IP-clean 2D 4X playable in the browser.">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body { height: 100%; background: #0b1220; }
@@ -20,7 +19,8 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <script type="text/babel">
+  <!-- IMPORTANT: data-presets ensures JSX transpiles on GitHub Pages -->
+  <script type="text/babel" data-presets="env,react">
     const { useEffect, useMemo, useRef, useState } = React;
 
     // ---------- Utilities ----------
@@ -72,7 +72,7 @@
     const TECHS = [
       { key: "beam1", name: "Directed Energy I", cost: 60, effect: s => s.mod.damage += 0.05 },
       { key: "eng1", name: "Subspace Drives", cost: 90, effect: s => s.mod.speed += 0.15 },
-      { key: "econ1", name: "Post‑Scarcity Logistics", cost: 120, effect: s => s.mod.yields += 0.1 },
+      { key: "econ1", name: "Post-Scarcity Logistics", cost: 120, effect: s => s.mod.yields += 0.1 },
       { key: "beam2", name: "Directed Energy II", cost: 160, req: ["beam1"], effect: s => s.mod.damage += 0.08 },
       { key: "unity1", name: "Galactic Charter", cost: 140, effect: s => s.mod.influence += 0.15 },
       { key: "forge1", name: "Matter Forges", cost: 200, effect: s => s.mod.alloy += 0.15 },
@@ -114,7 +114,6 @@
       return systems;
     }
 
-    // ---------- AI Factions ----------
     const AI_TEMPLATES = [
       { key:"hegemony", name:"Zhar Hegemony", trait:"militarist" },
       { key:"league", name:"Aurigan League", trait:"mercantile" },
@@ -205,7 +204,7 @@
         setAis(newAIs);
         setMap(s);
         setSelected(pStart);
-        setLog(l=>[...l, \`Home system established at \${s[pStart].name}.\`]);
+        setLog(l=>[...l, `Home system established at ${s[pStart].name}.`]);
       // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [seed]);
 
@@ -293,7 +292,7 @@
         let eventText = null;
         if (evRoll < 0.18){
           const t = [
-            { text:"A frontier outpost discovers an alloy‑rich asteroid.", effect: p=> (p.res.alloys += 40) },
+            { text:"A frontier outpost discovers an alloy-rich asteroid.", effect: p=> (p.res.alloys += 40) },
             { text:"Refugees swell a colony. Productivity rises.", effect: ()=>{ const ps = newMap.filter(s=>s.owner==="player"); if (ps.length){ choice(Math.random, ps).pop += 1; } } },
             { text:"Diplomatic envoy excels. Influence surges.", effect: p=> (p.res.influence += 20) },
             { text:"Supply shortfall hits budgets.", effect: p=> (p.res.credits = Math.max(0, p.res.credits - 30)) },
@@ -317,9 +316,9 @@
         setTurn(t=>t+1);
         setLog(l=> [
           ...l,
-          \`Turn \${turn} income: +£\${Math.round(inc.credits)} | +\${Math.round(inc.alloys)} alloys | +\${Math.round(inc.science)} science | +\${Math.round(inc.influence)} influence.\`,
-          ...(eventText?[\`Event: \${eventText}\`]:[]),
-          ...([...ownershipChanges].map(id=>\`Control shifted at \${newMap[id].name}.\`))
+          `Turn ${turn} income: +£${Math.round(inc.credits)} | +${Math.round(inc.alloys)} alloys | +${Math.round(inc.science)} science | +${Math.round(inc.influence)} influence.`,
+          ...(eventText?[`Event: ${eventText}`]:[]),
+          ...([...ownershipChanges].map(id=>`Control shifted at ${newMap[id].name}.`))
         ]);
         if (newVictory) setVictory(newVictory);
       }
@@ -328,22 +327,22 @@
         if (!selectedSystem || selectedSystem.owner!=="player") return;
         const def = BUILDINGS[b];
         if (!def) return;
-        if (!canAfford(player.res, def.cost)) { toast(\`Insufficient resources for \${b}.\`); return; }
+        if (!canAfford(player.res, def.cost)) { toast(`Insufficient resources for ${b}.`); return; }
         const m = map.map(s=>({...s}));
         m[selected].buildings = [...m[selected].buildings, b];
         setMap(m);
         setPlayer(p=> ({...p, res: pay(p.res, def.cost)}));
-        setLog(l=>[...l, \`Construction queued: \${b} at \${selectedSystem.name}.\`]);
+        setLog(l=>[...l, `Construction queued: ${b} at ${selectedSystem.name}.`]);
       }
 
       function produce(ship){
         if (!selectedSystem || selectedSystem.owner!=="player") return;
         const def = SHIPS[ship];
-        if (!canAfford(player.res, def.cost)) { toast(\`Insufficient resources for \${ship}.\`); return; }
+        if (!canAfford(player.res, def.cost)) { toast(`Insufficient resources for ${ship}.`); return; }
         const fleets = { ...player.fleets };
         fleets[selected] = (fleets[selected]||[]).concat(ship);
         setPlayer(p=> ({...p, res: pay(p.res, def.cost), fleets }));
-        setLog(l=>[...l, \`\${ship} produced at \${selectedSystem.name}.\`]);
+        setLog(l=>[...l, `${ship} produced at ${selectedSystem.name}.`]);
       }
 
       function colonise(){
@@ -355,7 +354,7 @@
         m[selected].owner = "player";
         m[selected].buildings = ["Mine"];
         setMap(m);
-        setLog(l=>[...l, \`We have claimed \${s.name}.\`]);
+        setLog(l=>[...l, `We have claimed ${s.name}.`]);
       }
 
       function moveFleet(fromId, toId){
@@ -366,7 +365,7 @@
         fleets[toId] = (fleets[toId]||[]).concat(fleets[fromId]);
         fleets[fromId] = [];
         setPlayer(p=> ({...p, fleets }));
-        setLog(l=>[...l, \`Fleet moved from \${m[fromId].name} to \${m[toId].name}.\`]);
+        setLog(l=>[...l, `Fleet moved from ${m[fromId].name} to ${m[toId].name}.`]);
       }
 
       function nextHop(m, start, goal){
@@ -388,7 +387,7 @@
         p.techs = [...p.techs, t.key];
         t.effect(p);
         setPlayer(p);
-        setLog(l=>[...l, \`Breakthrough achieved: \${t.name}.\`]);
+        setLog(l=>[...l, `Breakthrough achieved: ${t.name}.`]);
       }
 
       function treaty(aiKey, kind){
@@ -403,7 +402,7 @@
         if (kind==="alliance"){ a.treaties.alliance = !a.treaties.alliance; p.treaties[aiKey] = { ...(p.treaties[aiKey]||{}), alliance: a.treaties.alliance }; }
         setAis(ais.map((x,i)=> i===idx? a : x));
         setPlayer(p);
-        setLog(l=>[...l, \`\${a.name} \${(a.treaties[kind]?"accepted":"revoked")} \${kind}.\`]);
+        setLog(l=>[...l, `${a.name} ${(a.treaties[kind]?"accepted":"revoked")} ${kind}.`]);
       }
 
       function tribute(aiKey, amount){
@@ -415,7 +414,7 @@
         p.res.credits -= amount; a.res.credits += amount; a.opinion += Math.round(amount/20);
         setAis(ais.map((x,i)=> i===idx? a : x));
         setPlayer(p);
-        setLog(l=>[...l, \`We delivered £\${amount} tribute to \${a.name}. Their opinion improved.\`]);
+        setLog(l=>[...l, `We delivered £${amount} tribute to ${a.name}. Their opinion improved.`]);
       }
 
       function restart(){
@@ -525,7 +524,7 @@
             setHover(h?.id ?? null);
           }} onClick={handleClick} className="block mx-auto">
             {map.map(s=> s.lanes.map(id=> s.id<id && (
-              <line key={\`\${s.id}-\${id}\`} x1={s.x} y1={s.y} x2={map[id].x} y2={map[id].y} stroke="#334155" strokeWidth={1} />
+              <line key={`${s.id}-${id}`} x1={s.x} y1={s.y} x2={map[id].x} y2={map[id].y} stroke="#334155" strokeWidth={1} />
             )))}
             {map.map(s=> (
               <g key={s.id}>
@@ -570,7 +569,7 @@
               {s.owner==="player" && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {Object.keys(BUILDINGS).map(b=> (
-                    <ActionBtn key={b} onClick={()=>onBuild(b)} label={\`Build \${b}\`} />
+                    <ActionBtn key={b} onClick={()=>onBuild(b)} label={`Build ${b}`} />
                   ))}
                 </div>
               )}
@@ -580,7 +579,7 @@
               <div>Our Fleet: {playerFleet.length? playerFleet.join(", ") : "—"}</div>
               {s.owner==="player" && (
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {Object.keys(SHIPS).map(k=> <ActionBtn key={k} onClick={()=>onProduce(k)} label={\`Produce \${k}\`} />)}
+                  {Object.keys(SHIPS).map(k=> <ActionBtn key={k} onClick={()=>onProduce(k)} label={`Produce ${k}`} />)}
                 </div>
               )}
               <div className="mt-2 text-xs text-slate-400">Starlanes: {s.lanes.map(id=> map[id].name).join(", ")}</div>
@@ -620,7 +619,7 @@
               <div className="mt-1 text-xs text-slate-400">Trait: {a.trait} • Status: {a.alive?"Active":"Eliminated"}</div>
               <div className="mt-2 flex flex-wrap gap-2">
                 <ActionBtn onClick={()=>onTreaty(a.key,"pact")} label={`${treaties[a.key]?.pact?"Revoke":"Offer"} Trade Pact`} />
-                <ActionBtn onClick={()=>onTreaty(a.key,"npa")} label={`${treaties[a.key]?.npa?"Revoke":"Offer"} Non‑Aggression`} />
+                <ActionBtn onClick={()=>onTreaty(a.key,"npa")} label={`${treaties[a.key]?.npa?"Revoke":"Offer"} Non-Aggression`} />
                 <ActionBtn onClick={()=>onTreaty(a.key,"alliance")} label={`${treaties[a.key]?.alliance?"Break":"Propose"} Alliance`} />
                 <TributeControl onTribute={(amt)=>onTribute(a.key, amt)} />
               </div>
