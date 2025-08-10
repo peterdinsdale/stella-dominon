@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stellar Dominion — 2D 4X (Trek‑inspired)</title>
+  <meta name="description" content="A small, Trek‑inspired but IP‑clean 2D 4X playable in the browser.">
+  <!-- Tailwind (Play CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body { height: 100%; background: #0b1220; }
+    #root { height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React + ReactDOM + Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useRef, useState } = React;
+
+    // ---------- Utilities ----------
+    const rand = (seed) => {
+      let t = seed >>> 0;
+      return () => {
+        t += 0x6D2B79F5;
+        let r = Math.imul(t ^ (t >>> 15), 1 | t);
+        r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+        return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+      };
+    };
+
+    function choice(r, arr) { return arr[Math.floor((typeof r === 'function' ? r() : Math.random()) * arr.length)]; }
+    function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+
+    // ---------- Names ----------
+    const SYLLABLES = [
+      "ar","an","or","un","ve","ka","ri","ta","lon","sel","tri","mer","qua","tor","den","ith","sha","vor","zen","hal"
+    ];
+    const makeName = (r) => {
+      const parts = 2 + Math.floor(r()*2);
+      let s = "";
+      for (let i=0;i<parts;i++) s += choice(r, SYLLABLES);
+      return s.charAt(0).toUpperCase()+s.slice(1);
+    };
+
+    // ---------- Types & Constants ----------
+    const WIDTH = 980;
+    const HEIGHT = 640;
+    const NUM_SYSTEMS = 28;
+    const MAX_LANES = 4;
+    const STARTING_SYSTEMS = 1;
+
+    const BUILDINGS = {
+      Mine: { cost: { credits: 60, alloys: 20 }, upkeep: 2, yields: { credits: 4, alloys: 3 } },
+      Lab: { cost: { credits: 70, alloys: 15 }, upkeep: 2, yields: { science: 5 } },
+      Shipyard: { cost: { credits: 100, alloys: 40 }, upkeep: 3, yields: { shipcap: 2 } },
+      CommsHub: { cost: { credits: 80, alloys: 25 }, upkeep: 2, yields: { influence: 2, credits: 2 } },
+    };
+
+    const SHIPS = {
+      Scout: { cost: { credits: 40, alloys: 20 }, strength: 6, speed: 3 },
+      Corvette: { cost: { credits: 80, alloys: 40 }, strength: 14, speed: 2 },
+      Cruiser: { cost: { credits: 140, alloys: 70 }, strength: 26, speed: 2 },
+      Dreadnought: { cost: { credits: 260, alloys: 140 }, strength: 48, speed: 1 },
+    };
+
+    const TECHS = [
+      { key: "beam1", name: "Directed Energy I", cost: 60, effect: s => s.mod.damage += 0.05 },
+      { key: "eng1", name: "Subspace Drives", cost: 90, effect: s => s.mod.speed += 0.15 },
+      { key: "econ1", name: "Post‑Scarcity Logistics", cost: 120, effect: s => s.mod.yields += 0.1 },
+      { key: "beam2", name: "Directed Energy II", cost: 160, req: ["beam1"], effect: s => s.mod.damage += 0.08 },
+      { key: "unity1", name: "Galactic Charter", cost: 140, effect: s => s.mod.influence += 0.15 },
+      { key: "forge1", name: "Matter Forges", cost: 200, effect: s => s.mod.alloy += 0.15 },
+      { key: "ai1", name: "Cognitive Mesh", cost: 260, effect: s => s.mod.science += 0.20 },
+    };
+
+    const VICTORY = {
+      SCIENCE: { needed: 6, label: "Science Victory: complete 6 techs" },
+      UNITY: { needed: 2, label: "Unity Victory: secure alliances with both AIs" },
+      SUPREMACY: { label: "Supremacy Victory: eliminate both AIs" }
+    };
+
+    // ---------- Map Generation ----------
+    function generateMap(seed=12345){
+      const r = rand(seed);
+      const systems = [];
+      for(let i=0;i<NUM_SYSTEMS;i++){
+        const x = 40 + r()*(WIDTH-80);
+        const y = 40 + r()*(HEIGHT-80);
+        const name = makeName(r);
+        const richness = 0.5 + r();
+        const research = 0.5 + r();
+        const habitability = 0.4 + r();
+        const pop = Math.round(2 + r()*4);
+        systems.push({ id:i, name, x, y, richness, research, habitability, pop, owner:null, buildings:[], garrison:[], explored:false });
+      }
+      for(let i=0;i<NUM_SYSTEMS;i++){
+        const a = systems[i];
+        const dists = systems.map((b)=>({ id:b.id, d: Math.hypot(a.x-b.x,a.y-b.y) })).filter(o=>o.id!==a.id).sort((p,q)=>p.d-q.d);
+        a.lanes = dists.slice(0,2+Math.floor(r()* (MAX_LANES-1))).map(o=>o.id);
+      }
+      for (const s of systems){
+        for (const id of s.lanes){
+          const t = systems[id];
+          if (!t.lanes) t.lanes=[];
+          if (!t.lanes.includes(s.id)) t.lanes.push(s.id);
+        }
+      }
+      return systems;
+    }
+
+    // ---------- AI Factions ----------
+    const AI_TEMPLATES = [
+      { key:"hegemony", name:"Zhar Hegemony", trait:"militarist" },
+      { key:"league", name:"Aurigan League", trait:"mercantile" },
+    ];
+
+    function systemYield(sys){
+      const baseCredits = sys.pop * (0.8 + sys.richness*0.6);
+      const baseAlloys  = sys.pop * (0.6 + sys.richness*0.8);
+      const baseSci     = sys.pop * (0.5 + sys.research*0.9);
+      const baseInfl    = sys.pop * (0.2 + sys.habitability*0.3);
+      let bCred=0,bAll=0,bSci=0,bInfl=0, shipcap=0, upkeep=0;
+      for(const b of sys.buildings){
+        const def = BUILDINGS[b];
+        if (!def) continue;
+        upkeep += def.upkeep||0;
+        bCred += def.yields.credits||0;
+        bAll  += def.yields.alloys||0;
+        bSci  += def.yields.science||0;
+        bInfl += def.yields.influence||0;
+        shipcap += def.yields.shipcap||0;
+      }
+      return { credits: baseCredits + bCred - upkeep, alloys: baseAlloys + bAll, science: baseSci + bSci, influence: baseInfl + bInfl, shipcap };
+    }
+
+    function fleetStrength(fleet, mods){
+      const m = mods?.damage || 0;
+      return fleet.reduce((s, f)=> s + (SHIPS[f]?.strength||0), 0) * (1+m);
+    }
+
+    function canAfford(bank, cost){
+      return Object.entries(cost).every(([k,v]) => (bank[k]||0) >= v);
+    }
+
+    function pay(bank, cost){
+      const res = { ...bank };
+      for(const [k,v] of Object.entries(cost)) res[k] = (res[k]||0) - v;
+      return res;
+    }
+
+    function Game(){
+      const [seed, setSeed] = useState( Math.floor(Math.random()*1e9) );
+      const [map, setMap] = useState(()=> generateMap(seed));
+      const [turn, setTurn] = useState(1);
+      const [log, setLog] = useState(["Welcome, Commander. Secure peace through strength, science, or unity."]);
+      const [selected, setSelected] = useState(null);
+      const [player, setPlayer] = useState(()=>({
+        name:"Commonwealth Directorate",
+        color:"#22c55e",
+        res:{ credits: 220, alloys: 120, science: 0, influence: 20 },
+        techs:[],
+        mod:{ damage:0, speed:0, yields:0, science:0, influence:0, alloy:0 },
+        fleets:{},
+        treaties:{},
+      }));
+      const [ais, setAis] = useState(()=> AI_TEMPLATES.map((t,i)=>({
+        ...t,
+        color: i===0?"#ef4444":"#3b82f6",
+        opinion: 10 + i*5,
+        power: 1.0 + i*0.15,
+        home: i,
+        treaties:{ pact:false, npa:false, alliance:false, tribute:0 },
+        fleets:{}, res:{ credits: 200, alloys: 110 },
+        alive:true,
+      })));
+      const [victory, setVictory] = useState(null);
+
+      useEffect(()=>{
+        const r = rand(seed);
+        const s = generateMap(seed);
+        const startIds = new Set();
+        while(startIds.size < STARTING_SYSTEMS + ais.length){
+          startIds.add(Math.floor(r()*NUM_SYSTEMS));
+        }
+        const ids = [...startIds];
+        const pStart = ids[0];
+        s[pStart].owner = "player";
+        s[pStart].buildings = ["Mine","Lab","Shipyard"];
+        s[pStart].explored = true;
+
+        const newAIs = ais.map((ai, idx)=>{
+          const home = ids[idx+STARTING_SYSTEMS];
+          s[home].owner = ai.key;
+          s[home].buildings = ["Mine","Shipyard"];
+          s[home].explored = false;
+          return { ...ai, home };
+        });
+
+        setAis(newAIs);
+        setMap(s);
+        setSelected(pStart);
+        setLog(l=>[...l, \`Home system established at \${s[pStart].name}.\`]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [seed]);
+
+      useEffect(()=>{
+        const save = { seed, map, turn, log, selected, player, ais, victory };
+        try { localStorage.setItem("stellar_dominion_save", JSON.stringify(save)); } catch(e){ /* ignore */ }
+      }, [seed, map, turn, log, selected, player, ais, victory]);
+
+      useEffect(()=>{
+        const raw = localStorage.getItem("stellar_dominion_save");
+        if (raw){
+          try{ const sav = JSON.parse(raw); if (sav && sav.turn>1){
+            setSeed(sav.seed); setMap(sav.map); setTurn(sav.turn); setLog(sav.log);
+            setSelected(sav.selected); setPlayer(sav.player); setAis(sav.ais); setVictory(sav.victory);
+          }}catch(e){/* ignore */}
+        }
+      }, []);
+
+      const empireYield = useMemo(()=>{
+        let y = { credits:0, alloys:0, science:0, influence:0, shipcap:0 };
+        for(const sys of map){ if (sys.owner === "player"){ const s = systemYield(sys); y.credits+=s.credits; y.alloys+=s.alloys; y.science+=s.science; y.influence+=s.influence; y.shipcap+=s.shipcap; }}
+        y.credits *= (1 + player.mod.yields);
+        y.alloys  *= (1 + player.mod.yields + player.mod.alloy);
+        y.science *= (1 + player.mod.science);
+        y.influence *= (1 + player.mod.influence);
+        return y;
+      }, [map, player.mod]);
+
+      const techsAvailable = useMemo(()=>{
+        return TECHS.filter(t=> !player.techs.includes(t.key) && (!t.req || t.req.every(r=>player.techs.includes(r))));
+      }, [player.techs]);
+
+      const selectedSystem = selected!=null ? map[selected] : null;
+
+      function endTurn(){
+        const inc = empireYield;
+        const newRes = { ...player.res };
+        for(const k of ["credits","alloys","science","influence"]) newRes[k] = Math.round( (newRes[k]||0) + inc[k] );
+
+        let newMap = map.map(s=> ({...s}));
+
+        let newAIs = ais.map(ai=> ({...ai, fleets: {...ai.fleets}, res: {...ai.res} }));
+        newAIs = newAIs.map(ai=>{
+          if (!ai.alive) return ai;
+          if (ai.res.credits>=80 && ai.res.alloys>=40){ ai.res.credits-=80; ai.res.alloys-=40; const arr = ai.fleets[ai.home]||[]; arr.push("Corvette"); ai.fleets[ai.home]=arr; }
+          const enemyTargets = newMap.filter(s=> s.owner && s.owner!==ai.key).map(s=>({id:s.id, d: Math.hypot(newMap[ai.home].x - s.x, newMap[ai.home].y - s.y)})).sort((a,b)=>a.d-b.d);
+          const targetId = enemyTargets[0]?.id ?? ai.home;
+          for (const [sid, fleet] of Object.entries(ai.fleets)){
+            const here = newMap[+sid];
+            if (!fleet?.length) continue;
+            if (+sid === targetId) continue;
+            const next = nextHop(newMap, +sid, targetId);
+            if (next!=null){
+              ai.fleets[next] = (ai.fleets[next]||[]).concat(fleet);
+              ai.fleets[+sid] = [];
+            }
+          }
+          return ai;
+        });
+
+        const ownershipChanges = new Set();
+
+        function resolveAt(systemId){
+          const s = newMap[systemId];
+          let contenders = [];
+          let pFleet = player.fleets[systemId]||[];
+          if (pFleet.length) contenders.push({ key:"player", name: "Commonwealth", color: player.color, str: fleetStrength(pFleet, player.mod) });
+          for(const ai of newAIs){
+            const f = ai.fleets[systemId]||[];
+            if (f.length) contenders.push({ key: ai.key, name: ai.name, color: ai.color, str: fleetStrength(f, {damage:0}) * ai.power });
+          }
+          if (contenders.length<=1) return;
+          contenders = contenders.map(c=> ({...c, str: c.str * (0.9 + Math.random()*0.2)}));
+          contenders.sort((a,b)=>b.str-a.str);
+          const winner = contenders[0];
+          if (player.fleets[systemId]) player.fleets[systemId] = player.fleets[systemId].slice(0, Math.ceil(player.fleets[systemId].length/2));
+          for(const ai of newAIs){ if (ai.fleets[systemId]) ai.fleets[systemId] = ai.fleets[systemId].slice(0, Math.ceil(ai.fleets[systemId].length/2)); }
+          const ownerBefore = s.owner;
+          if (winner.key!==ownerBefore){ s.owner = winner.key; ownershipChanges.add(systemId); }
+        }
+
+        for(let i=0;i<newMap.length;i++) resolveAt(i);
+
+        const evRoll = Math.random();
+        let eventText = null;
+        if (evRoll < 0.18){
+          const t = [
+            { text:"A frontier outpost discovers an alloy‑rich asteroid.", effect: p=> (p.res.alloys += 40) },
+            { text:"Refugees swell a colony. Productivity rises.", effect: ()=>{ const ps = newMap.filter(s=>s.owner==="player"); if (ps.length){ choice(Math.random, ps).pop += 1; } } },
+            { text:"Diplomatic envoy excels. Influence surges.", effect: p=> (p.res.influence += 20) },
+            { text:"Supply shortfall hits budgets.", effect: p=> (p.res.credits = Math.max(0, p.res.credits - 30)) },
+          ];
+          const e = choice(Math.random, t); e.effect({res:newRes}); eventText = e.text;
+        }
+
+        let newVictory = null;
+        const aliveAIs = newAIs.filter(a=> a.alive);
+        const eliminated = aliveAIs.filter(ai=> !newMap.some(s=> s.owner===ai.key ));
+        for (const gone of eliminated){ gone.alive = false; }
+
+        const alliances = ais.filter(ai=> ai.treaties?.alliance).length;
+        if (player.techs.length >= VICTORY.SCIENCE.needed) newVictory = "SCIENCE";
+        else if (alliances >= VICTORY.UNITY.needed) newVictory = "UNITY";
+        else if (newAIs.every(ai=> !newMap.some(s=> s.owner===ai.key ))) newVictory = "SUPREMACY";
+
+        setPlayer(p=> ({...p, res:newRes }));
+        setAis(newAIs);
+        setMap(newMap);
+        setTurn(t=>t+1);
+        setLog(l=> [
+          ...l,
+          \`Turn \${turn} income: +£\${Math.round(inc.credits)} | +\${Math.round(inc.alloys)} alloys | +\${Math.round(inc.science)} science | +\${Math.round(inc.influence)} influence.\`,
+          ...(eventText?[\`Event: \${eventText}\`]:[]),
+          ...([...ownershipChanges].map(id=>\`Control shifted at \${newMap[id].name}.\`))
+        ]);
+        if (newVictory) setVictory(newVictory);
+      }
+
+      function build(b){
+        if (!selectedSystem || selectedSystem.owner!=="player") return;
+        const def = BUILDINGS[b];
+        if (!def) return;
+        if (!canAfford(player.res, def.cost)) { toast(\`Insufficient resources for \${b}.\`); return; }
+        const m = map.map(s=>({...s}));
+        m[selected].buildings = [...m[selected].buildings, b];
+        setMap(m);
+        setPlayer(p=> ({...p, res: pay(p.res, def.cost)}));
+        setLog(l=>[...l, \`Construction queued: \${b} at \${selectedSystem.name}.\`]);
+      }
+
+      function produce(ship){
+        if (!selectedSystem || selectedSystem.owner!=="player") return;
+        const def = SHIPS[ship];
+        if (!canAfford(player.res, def.cost)) { toast(\`Insufficient resources for \${ship}.\`); return; }
+        const fleets = { ...player.fleets };
+        fleets[selected] = (fleets[selected]||[]).concat(ship);
+        setPlayer(p=> ({...p, res: pay(p.res, def.cost), fleets }));
+        setLog(l=>[...l, \`\${ship} produced at \${selectedSystem.name}.\`]);
+      }
+
+      function colonise(){
+        if (!selectedSystem) return;
+        const s = map[selected];
+        if (s.owner) { toast("System already owned."); return; }
+        if (!player.fleets[selected]?.length){ toast("Need a ship in orbit to establish control."); return; }
+        const m = map.map(x=>({...x}));
+        m[selected].owner = "player";
+        m[selected].buildings = ["Mine"];
+        setMap(m);
+        setLog(l=>[...l, \`We have claimed \${s.name}.\`]);
+      }
+
+      function moveFleet(fromId, toId){
+        const m = map;
+        if (!player.fleets[fromId]?.length) { toast("No ships present."); return; }
+        if (!m[fromId].lanes.includes(toId)) { toast("No starlane to target."); return; }
+        const fleets = { ...player.fleets };
+        fleets[toId] = (fleets[toId]||[]).concat(fleets[fromId]);
+        fleets[fromId] = [];
+        setPlayer(p=> ({...p, fleets }));
+        setLog(l=>[...l, \`Fleet moved from \${m[fromId].name} to \${m[toId].name}.\`]);
+      }
+
+      function nextHop(m, start, goal){
+        const q=[start]; const prev={ [start]:null };
+        let head=0; while(head<q.length){
+          const u = q[head++]; if (u===goal) break;
+          for(const v of m[u].lanes){ if (prev[v]==null && v!==start){ prev[v]=u; q.push(v); }}
+        }
+        if (prev[goal]==null) return null;
+        let step=goal; while(prev[step]!==start) step = prev[step];
+        return step;
+      }
+
+      function research(t){
+        if (!t) return;
+        if (player.res.science < t.cost){ toast("Not enough science."); return; }
+        const p = {...player};
+        p.res.science -= t.cost;
+        p.techs = [...p.techs, t.key];
+        t.effect(p);
+        setPlayer(p);
+        setLog(l=>[...l, \`Breakthrough achieved: \${t.name}.\`]);
+      }
+
+      function treaty(aiKey, kind){
+        const idx = ais.findIndex(a=>a.key===aiKey);
+        if (idx<0) return;
+        const a = {...ais[idx]};
+        const p = {...player};
+        a.treaties = { ...a.treaties };
+        p.treaties = { ...p.treaties };
+        if (kind==="pact"){ a.treaties.pact = !a.treaties.pact; p.treaties[aiKey] = { ...(p.treaties[aiKey]||{}), pact: a.treaties.pact }; }
+        if (kind==="npa"){ a.treaties.npa = !a.treaties.npa; p.treaties[aiKey] = { ...(p.treaties[aiKey]||{}), npa: a.treaties.npa }; }
+        if (kind==="alliance"){ a.treaties.alliance = !a.treaties.alliance; p.treaties[aiKey] = { ...(p.treaties[aiKey]||{}), alliance: a.treaties.alliance }; }
+        setAis(ais.map((x,i)=> i===idx? a : x));
+        setPlayer(p);
+        setLog(l=>[...l, \`\${a.name} \${(a.treaties[kind]?"accepted":"revoked")} \${kind}.\`]);
+      }
+
+      function tribute(aiKey, amount){
+        const idx = ais.findIndex(a=>a.key===aiKey);
+        if (idx<0) return;
+        if (player.res.credits < amount){ toast("Insufficient credits."); return; }
+        const a = {...ais[idx]};
+        const p = {...player};
+        p.res.credits -= amount; a.res.credits += amount; a.opinion += Math.round(amount/20);
+        setAis(ais.map((x,i)=> i===idx? a : x));
+        setPlayer(p);
+        setLog(l=>[...l, \`We delivered £\${amount} tribute to \${a.name}. Their opinion improved.\`]);
+      }
+
+      function restart(){
+        try { localStorage.removeItem("stellar_dominion_save"); } catch(e){}
+        setSeed(Math.floor(Math.random()*1e9));
+        setMap(generateMap(seed));
+        setTurn(1); setLog(["New simulation initiated."]); setSelected(null);
+        setPlayer({ name:"Commonwealth Directorate", color:"#22c55e", res:{ credits: 220, alloys: 120, science: 0, influence: 20 }, techs:[], mod:{ damage:0, speed:0, yields:0, science:0, influence:0, alloy:0 }, fleets:{}, treaties:{} });
+        setAis(AI_TEMPLATES.map((t,i)=>({...t, color:i===0?"#ef4444":"#3b82f6", opinion:10+i*5, power:1.0+i*0.15, home:i, treaties:{ pact:false,npa:false,alliance:false, tribute:0 }, fleets:{}, res:{credits:200, alloys:110}, alive:true })));
+        setVictory(null);
+      }
+
+      return (
+        <div className="w-full h-full bg-slate-900 text-slate-100">
+          <div className="max-w-[1200px] mx-auto p-3 grid grid-cols-12 gap-3 h-full">
+            <div className="col-span-8 bg-slate-800 rounded-2xl p-2 relative">
+              <Header turn={turn} res={player.res} inc={empireYield} onEndTurn={endTurn} onRestart={restart} victory={victory} />
+              <StarMap map={map} player={player} ais={ais} selected={selected} setSelected={setSelected} onMove={moveFleet} />
+              <Footer log={log} />
+            </div>
+            <div className="col-span-4 space-y-3">
+              <Panel title="System">
+                {selectedSystem? (
+                  <SystemPanel s={selectedSystem} map={map} idx={selected} player={player} setSelected={setSelected} onBuild={build} onProduce={produce} onColonise={colonise} />
+                ):<div className="text-sm text-slate-300">Select a system to manage it.</div>}
+              </Panel>
+              <Panel title="Research">
+                <ResearchPanel techs={techsAvailable} onResearch={research} science={player.res.science} learned={player.techs} />
+              </Panel>
+              <Panel title="Diplomacy">
+                <DiploPanel ais={ais} treaties={player.treaties} onTreaty={treaty} onTribute={tribute} />
+              </Panel>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function Header({turn,res,inc,onEndTurn,onRestart,victory}){
+      return (
+        <div className="flex items-center justify-between p-2 bg-slate-900 rounded-xl mb-2">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-semibold">Stellar Dominion</h1>
+            <span className="text-xs px-2 py-0.5 bg-slate-700 rounded-full">Turn {turn}</span>
+            {victory && <span className="text-xs px-2 py-0.5 bg-emerald-600 rounded-full">Victory: {victory}</span>}
+          </div>
+          <div className="grid grid-cols-4 gap-3 text-xs">
+            <Res label="£" value={res.credits} inc={inc.credits} />
+            <Res label="Alloys" value={res.alloys} inc={inc.alloys} />
+            <Res label="Science" value={res.science} inc={inc.science} />
+            <Res label="Influence" value={res.influence} inc={inc.influence} />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onEndTurn} className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 transition">End Turn</button>
+            <button onClick={onRestart} className="px-3 py-1 rounded-xl bg-slate-700 hover:bg-slate-600 transition">Restart</button>
+          </div>
+        </div>
+      );
+    }
+
+    function Res({label,value,inc}){
+      return (
+        <div className="px-2 py-1 bg-slate-800 rounded-lg flex flex-col items-center">
+          <div className="text-slate-300">{label}</div>
+          <div className="font-semibold">{Math.round(value)}</div>
+          <div className="text-[10px] text-emerald-400">+{Math.round(inc)}/turn</div>
+        </div>
+      );
+    }
+
+    function Footer({log}){
+      return (
+        <div className="absolute bottom-2 left-2 right-2 bg-slate-900/70 rounded-xl p-2 text-xs h-28 overflow-y-auto">
+          {log.slice(-6).map((l,i)=> <div key={i} className="text-slate-300">• {l}</div>)}
+        </div>
+      );
+    }
+
+    function Panel({title, children}){
+      return (
+        <div className="bg-slate-800 rounded-2xl p-3">
+          <div className="text-sm font-semibold mb-2">{title}</div>
+          {children}
+        </div>
+      );
+    }
+
+    function StarMap({map, player, ais, selected, setSelected, onMove}){
+      const svgRef = useRef(null);
+      const [hover, setHover] = useState(null);
+
+      function handleClick(e){
+        const rect = svgRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+        const hit = map.find(s=> Math.hypot(s.x - x, s.y - y) < 12);
+        if (hit){ setSelected(hit.id); }
+      }
+
+      const ownerColor = (o)=> o==="player"?"#22c55e": (ais.find(a=>a.key===o)?.color || "#94a3b8");
+
+      return (
+        <div className="bg-slate-900 rounded-xl overflow-hidden">
+          <svg ref={svgRef} width={WIDTH} height={HEIGHT} onMouseMove={(e)=>{
+            const rect = svgRef.current.getBoundingClientRect();
+            const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+            const h = map.find(s=> Math.hypot(s.x - x, s.y - y) < 10);
+            setHover(h?.id ?? null);
+          }} onClick={handleClick} className="block mx-auto">
+            {map.map(s=> s.lanes.map(id=> s.id<id && (
+              <line key={\`\${s.id}-\${id}\`} x1={s.x} y1={s.y} x2={map[id].x} y2={map[id].y} stroke="#334155" strokeWidth={1} />
+            )))}
+            {map.map(s=> (
+              <g key={s.id}>
+                <circle cx={s.x} cy={s.y} r={12} fill={ ownerColor(s.owner) } stroke={ selected===s.id?"#f59e0b":"#0ea5e9" } strokeWidth={ selected===s.id?3:1 } />
+                <text x={s.x+14} y={s.y+4} fontSize={10} fill="#e2e8f0">{s.name}</text>
+              </g>
+            ))}
+            {hover!=null && (
+              <g>
+                <rect x={map[hover].x+16} y={map[hover].y-28} width={180} height={52} rx={8} fill="#0f172a" opacity="0.9" />
+                <text x={map[hover].x+24} y={map[hover].y-12} fontSize={11} fill="#e2e8f0">{map[hover].name}</text>
+                <text x={map[hover].x+24} y={map[hover].y+4} fontSize={10} fill="#94a3b8">Rich {map[hover].richness.toFixed(2)} | Res {map[hover].research.toFixed(2)} | Hab {map[hover].habitability.toFixed(2)}</text>
+              </g>
+            )}
+          </svg>
+          <div className="flex justify-between p-2 text-xs">
+            <div>Click a system to select.</div>
+            {selected!=null && map[selected].lanes.map(id=> (
+              <button key={id} onClick={()=>onMove(selected,id)} className="px-2 py-1 bg-slate-700 rounded-lg hover:bg-slate-600">Move → {map[id].name}</button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function SystemPanel({s, map, idx, player, setSelected, onBuild, onProduce, onColonise}){
+      const yields = systemYield(s);
+      const playerFleet = player.fleets[idx]||[];
+      return (
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">{s.name}</div>
+            <div className="text-xs text-slate-300">Owner: {s.owner||"Unclaimed"}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-slate-900 rounded-xl p-2">
+              <div className="text-xs text-slate-300 mb-1">Colony</div>
+              <div>Pop: {s.pop}</div>
+              <div>Buildings: {s.buildings.join(", ")||"None"}</div>
+              <div className="text-xs text-slate-400 mt-1">Yield → £{yields.credits.toFixed(1)}, {yields.alloys.toFixed(1)} alloys, {yields.science.toFixed(1)} sci, {yields.influence.toFixed(1)} infl</div>
+              {!s.owner && <button onClick={onColonise} className="mt-2 px-2 py-1 bg-emerald-600 rounded-lg hover:bg-emerald-500">Establish Control</button>}
+              {s.owner==="player" && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Object.keys(BUILDINGS).map(b=> (
+                    <ActionBtn key={b} onClick={()=>onBuild(b)} label={\`Build \${b}\`} />
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="bg-slate-900 rounded-xl p-2">
+              <div className="text-xs text-slate-300 mb-1">Orbit</div>
+              <div>Our Fleet: {playerFleet.length? playerFleet.join(", ") : "—"}</div>
+              {s.owner==="player" && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Object.keys(SHIPS).map(k=> <ActionBtn key={k} onClick={()=>onProduce(k)} label={\`Produce \${k}\`} />)}
+                </div>
+              )}
+              <div className="mt-2 text-xs text-slate-400">Starlanes: {s.lanes.map(id=> map[id].name).join(", ")}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function ResearchPanel({techs, onResearch, science, learned}){
+      return (
+        <div className="space-y-2 text-sm">
+          <div className="text-xs text-slate-300">Science: {Math.round(science)}</div>
+          {techs.length? techs.map(t=> (
+            <div key={t.key} className="flex items-center justify-between bg-slate-900 rounded-xl p-2">
+              <div>
+                <div className="font-semibold">{t.name}</div>
+                <div className="text-xs text-slate-400">Cost: {t.cost} • {t.req?`Req: ${t.req.join(', ')}`:"No prereq"}</div>
+              </div>
+              <button onClick={()=>onResearch(t)} className="px-2 py-1 bg-indigo-600 rounded-lg hover:bg-indigo-500">Research</button>
+            </div>
+          )): <div className="text-slate-300">All current tech complete.</div>}
+          {learned?.length>0 && <div className="text-xs text-slate-400">Learned: {learned.join(", ")}</div>}
+        </div>
+      );
+    }
+
+    function DiploPanel({ais, treaties, onTreaty, onTribute}){
+      return (
+        <div className="space-y-2 text-sm">
+          {ais.map(a=> (
+            <div key={a.key} className="bg-slate-900 rounded-xl p-2">
+              <div className="flex items-center justify-between">
+                <div className="font-semibold" style={{color:a.color}}>{a.name}</div>
+                <div className="text-xs text-slate-300">Opinion: {a.opinion}</div>
+              </div>
+              <div className="mt-1 text-xs text-slate-400">Trait: {a.trait} • Status: {a.alive?"Active":"Eliminated"}</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <ActionBtn onClick={()=>onTreaty(a.key,"pact")} label={`${treaties[a.key]?.pact?"Revoke":"Offer"} Trade Pact`} />
+                <ActionBtn onClick={()=>onTreaty(a.key,"npa")} label={`${treaties[a.key]?.npa?"Revoke":"Offer"} Non‑Aggression`} />
+                <ActionBtn onClick={()=>onTreaty(a.key,"alliance")} label={`${treaties[a.key]?.alliance?"Break":"Propose"} Alliance`} />
+                <TributeControl onTribute={(amt)=>onTribute(a.key, amt)} />
+              </div>
+            </div>
+          ))}
+          <div className="text-xs text-slate-400">Unity Victory requires alliances with both neighbours.</div>
+        </div>
+      );
+    }
+
+    function TributeControl({onTribute}){
+      const [amt, setAmt] = useState(50);
+      return (
+        <div className="flex items-center gap-1">
+          <input type="number" value={amt} onChange={e=>setAmt(parseInt(e.target.value)||0)} className="w-16 bg-slate-800 border border-slate-700 rounded-lg px-1 py-0.5" />
+          <button onClick={()=>onTribute(clamp(amt,10,500))} className="px-2 py-1 bg-slate-700 rounded-lg hover:bg-slate-600">Send Tribute</button>
+        </div>
+      );
+    }
+
+    function ActionBtn({onClick,label}){
+      return <button onClick={onClick} className="px-2 py-1 bg-slate-700 rounded-lg hover:bg-slate-600">{label}</button>;
+    }
+
+    function toast(msg){
+      const box = document.createElement('div');
+      box.textContent = msg;
+      box.className = "fixed bottom-6 right-6 bg-slate-800 text-slate-100 px-3 py-2 rounded-xl shadow-lg text-sm";
+      document.body.appendChild(box);
+      setTimeout(()=>{ box.remove(); }, 1500);
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<Game />);
+  </script>
+</body>
+</html>
